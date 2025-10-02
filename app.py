@@ -7,29 +7,34 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 import numpy as np
-from PIL import Image
 import base64
+from io import BytesIO
 
 # ========== Helper Functions ==========
 def img_to_bytes(img_path):
     """Convert image to base64"""
-    with open(img_path, "rb") as img_file:
-        return base64.b64encode(img_file.read()).decode("utf-8")
+    try:
+        with open(img_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode("utf-8")
+    except FileNotFoundError:
+        return None
 
 @st.cache_data
-def load_data(file, file_type):
-    """Load data based on file type"""
+def load_data(file):
+    """Load data from CSV or Excel file."""
     try:
-        if file_type == "csv":
-            return pd.read_csv(file)
-        elif file_type == "xlsx":
-            return pd.read_excel(file)
-        else:
-            st.error("Unsupported file format.")
-            return None
-    except Exception as e:
-        st.error(f"Error loading file: {e}")
+        df = pd.read_csv(file)
+        return df
+    except pd.errors.EmptyDataError:
+        st.error("The uploaded file is empty.")
         return None
+    except Exception as e:
+        try:
+            df = pd.read_excel(file)
+            return df
+        except Exception as e:
+            st.error(f"Error loading data: {e}. Please ensure the file is a valid CSV or Excel file.")
+            return None
 
 # ========== Page Configuration ==========
 st.set_page_config(
@@ -58,17 +63,18 @@ st.markdown("""
 
 # ========== Title Header with Image ==========
 image_path = "chart icon01.png"
-try:
-    image_base64 = img_to_bytes(image_path)
+image_base64 = img_to_bytes(image_path)
+
+if image_base64:
     st.markdown(f"""
         <div style="display: flex; align-items: center;">
             <img src="data:image/png;base64,{image_base64}" alt="Chart Icon" style="height: 50px; margin-right: 10px;">
             <h1>RESEARCH DATA ANALYSIS</h1>
         </div>
     """, unsafe_allow_html=True)
-except FileNotFoundError:
-    st.warning(f"Image '{image_path}' not found.")
+else:
     st.title("RESEARCH DATA ANALYSIS")
+    st.warning(f"Image '{image_path}' not found. Ensure it is in the correct directory.")
 
 st.header("Explore Your Data with Interactive Charts and Analysis")
 
@@ -81,17 +87,26 @@ with st.sidebar:
     st.header("Chart Settings")
     selected_charts = st.multiselect(
         "Select Chart Types",
-        ["Bar Chart", "Pie Chart", "Sankey Diagram",  # fixed typo
+        ["Bar Chart", "Pie Chart", "Sankey Diagram",
          "100% Stacked Bar Chart", "Stacked Vertical Bar Chart", "Line Chart"]
     )
 
 # ========== File Upload ==========
 uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"])
-if uploaded_file:
-    file_type = uploaded_file.name.split('.')[-1].lower()
-    data = load_data(uploaded_file, file_type)
+
+if uploaded_file is not None:
+    data = load_data(uploaded_file)
 
     if data is not None:
+        # ========== Data Info ==========
+        st.subheader("Data Information")
+        st.write("Data Types:")
+        st.write(data.dtypes)
+
+        non_numeric_cols = data.select_dtypes(exclude=["number"]).columns.tolist()
+        st.write("Non-numeric columns:", non_numeric_cols)
+
+        # ========== Display Data and Statistics based on Sidebar Settings ==========
         if show_data:
             st.subheader("Data Preview")
             st.dataframe(data.head())
@@ -99,13 +114,6 @@ if uploaded_file:
         if show_descriptive_stats:
             st.subheader("Descriptive Statistics")
             st.dataframe(data.describe())
-
-        # ========== Data Info ==========
-        st.subheader("Data Types")
-        st.write(data.dtypes)
-
-        non_numeric_cols = data.select_dtypes(exclude=["number"]).columns.tolist()
-        st.write("Non-numeric columns:", non_numeric_cols)
 
         # ========== Numeric-only Data ==========
         data_numeric = data.drop(non_numeric_cols, axis=1, errors='ignore').fillna(0)
@@ -144,9 +152,10 @@ if uploaded_file:
         # ========== Machine Learning Model ==========
         st.subheader("Simple Machine Learning (Logistic Regression)")
         if 'target' in data.columns:
-            X = data.drop('target', axis=1)
+            X = data.drop('target', axis=1, errors='ignore')
             y = data['target']
 
+            # Ensure X only contains numeric columns and handle missing values
             X = X.select_dtypes(include=['number']).fillna(0)
             X.replace([np.inf, -np.inf], np.nan, inplace=True)
             X.fillna(X.mean(), inplace=True)
